@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Compass & Turn-by-turn MVP</title>
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -37,7 +38,36 @@
             transition: background-color 0.2s;
         }
         #requestBtn { background-color: #007aff; }
-        #nextPointBtn { background-color: #34c759; display: none; }
+        #scanBtn { background-color: #ff9500; display: none; }
+        
+        #qr-reader {
+            width: 100%;
+            display: none;
+            margin-bottom: 10px;
+            border-radius: 12px;
+            overflow: hidden;
+            background: #000;
+        }
+        .notification {
+            display: none;
+            background-color: #333;
+            color: #fff;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            text-align: center;
+            font-size: 14px;
+        }
+        .test-qrs {
+            display: flex;
+            gap: 5px;
+            margin-top: 5px;
+        }
+        .test-qrs button {
+            background-color: #8e8e93;
+            font-size: 12px;
+            padding: 8px;
+        }
         button:disabled { background-color: #ccc; cursor: not-allowed; }
         
         .stats {
@@ -76,15 +106,30 @@
     <div class="controls">
         <h3 style="margin-top:0; margin-bottom: 15px; text-align: center;">Навигатор Выставки (Компас)</h3>
         
+        <div id="notification" class="notification">Сообщение</div>
+        <div id="qr-reader"></div>
+
         <button id="requestBtn">1. Включить компас (Старт)</button>
-        <button id="nextPointBtn">Подтвердить проход к: <span id="nextPointName">Поворот</span></button>
+        <button id="scanBtn">2. Отсканировать QR-код стенда</button>
+        
+        <!-- Кнопки для тестов без реальной камеры -->
+        <div class="test-qrs" id="testQrs" style="display: none;">
+            <button onclick="handleQRScan('start_qr')">QR: Вход</button>
+            <button onclick="handleQRScan('turn_1')">QR: Поворот (6м)</button>
+        </div>
         
         <div class="stats">
             <div style="display: flex; justify-content: space-between;">
-                <span>Текущая позиция:</span> <strong id="statusText">Вход</strong>
+                <span>Текущая позиция:</span> <strong id="statusText">Неизвестно</strong>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+                <span>Следующая точка:</span> <strong id="nextPointName">Вход</strong>
             </div>
             <div style="display: flex; justify-content: space-between;">
                 <span>Азимут (Компас):</span> <strong id="compassHeading">0°</strong>
+            </div>
+            <div style="display: flex; justify-content: space-between; color: #007aff;">
+                <span>Осталось пройти:</span> <strong id="distanceText">0 м</strong>
             </div>
         </div>
     </div>
@@ -108,6 +153,8 @@
         // --- 2. ПЕРЕМЕННЫЕ СОСТОЯНИЯ ---
         let userPos = { x: graphNodes[route[0]].x, y: graphNodes[route[0]].y };
         let currentHeading = 0; // Угол поворота смартфона в градусах
+
+        let html5QrcodeScanner;
 
         const canvas = document.getElementById('mapCanvas');
         const ctx = canvas.getContext('2d');
@@ -225,36 +272,86 @@
 
         function startNavigation() {
             document.getElementById('requestBtn').style.display = 'none';
-            document.getElementById('nextPointBtn').style.display = 'block';
+            document.getElementById('scanBtn').style.display = 'block';
+            document.getElementById('testQrs').style.display = 'flex';
+            showNotification("Компас включен. Отсканируйте QR-код для старта.");
             updateUI();
         }
 
-        // Ручное продвижение по маршруту
-        document.getElementById('nextPointBtn').addEventListener('click', () => {
-            if (currentNodeIndex < route.length - 1) {
-                currentNodeIndex++;
+        document.getElementById('scanBtn').addEventListener('click', () => {
+            document.getElementById('qr-reader').style.display = 'block';
+            document.getElementById('scanBtn').style.display = 'none';
+            
+            // Инициализация сканера (запрашивает доступ к камере заднего вида)
+            html5QrcodeScanner = new Html5Qrcode("qr-reader");
+            const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+            
+            html5QrcodeScanner.start({ facingMode: "environment" }, config, onScanSuccess)
+            .catch(err => {
+                showNotification("Камера недоступна. Используйте тестовые кнопки.");
+                document.getElementById('scanBtn').style.display = 'block';
+                document.getElementById('qr-reader').style.display = 'none';
+            });
+        });
+
+        function onScanSuccess(decodedText, decodedResult) {
+            // Останавливаем камеру после успешного сканирования
+            html5QrcodeScanner.stop().then(() => {
+                document.getElementById('qr-reader').style.display = 'none';
+                document.getElementById('scanBtn').style.display = 'block';
+                handleQRScan(decodedText);
+            }).catch(err => console.error(err));
+        }
+
+        // Обновление позиции на основе данных из QR-кода
+        function handleQRScan(nodeId) {
+            if (graphNodes[nodeId]) {
+                userPos.x = graphNodes[nodeId].x;
+                userPos.y = graphNodes[nodeId].y;
                 
-                // Перемещаем точку на следующий узел
-                let nextNodeId = route[currentNodeIndex];
-                userPos.x = graphNodes[nextNodeId].x;
-                userPos.y = graphNodes[nextNodeId].y;
+                let routeIndex = route.indexOf(nodeId);
+                if (routeIndex !== -1) {
+                    currentNodeIndex = routeIndex;
+                }
                 
+                showNotification(`Вы находитесь: ${graphNodes[nodeId].name}`);
                 updateUI();
                 drawMap();
+            } else {
+                showNotification("Неизвестный QR-код.");
             }
-        });
+        }
+        
+        function showNotification(text) {
+            const notif = document.getElementById('notification');
+            notif.innerText = text;
+            notif.style.display = 'block';
+            setTimeout(() => { notif.style.display = 'none'; }, 4000);
+        }
 
         function updateUI() {
             let currentNodeId = route[currentNodeIndex];
             document.getElementById('statusText').innerText = graphNodes[currentNodeId].name;
 
+            // Расчет дистанции до следующей точки
             if (currentNodeIndex < route.length - 1) {
                 let nextNodeId = route[currentNodeIndex + 1];
                 document.getElementById('nextPointName').innerText = graphNodes[nextNodeId].name;
+                
+                // Математика: Теорема Пифагора. Масштаб: 100 пикселей = 1 метр.
+                let dx = graphNodes[nextNodeId].x - graphNodes[currentNodeId].x;
+                let dy = graphNodes[nextNodeId].y - graphNodes[currentNodeId].y;
+                let distancePixels = Math.sqrt(dx*dx + dy*dy);
+                let distanceMeters = Math.round(distancePixels / 100);
+                
+                document.getElementById('distanceText').innerText = distanceMeters + " м";
             } else {
-                document.getElementById('nextPointBtn').innerText = "Вы прибыли на место!";
-                document.getElementById('nextPointBtn').disabled = true;
-                document.getElementById('nextPointBtn').style.backgroundColor = '#8e8e93';
+                // Финиш
+                document.getElementById('nextPointName').innerText = "Вы на месте!";
+                document.getElementById('distanceText').innerText = "0 м";
+                document.getElementById('scanBtn').disabled = true;
+                document.getElementById('scanBtn').style.backgroundColor = '#8e8e93';
+                document.getElementById('testQrs').style.display = 'none';
             }
         }
     </script>

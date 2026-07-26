@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Compass & Turn-by-turn MVP</title>
+    <!-- Загружаем легковесную библиотеку для сканирования QR прямо в браузере -->
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <style>
         body {
@@ -25,6 +26,7 @@
             margin-bottom: 10px;
             box-sizing: border-box;
         }
+        
         button {
             width: 100%;
             padding: 12px;
@@ -42,12 +44,13 @@
         
         #qr-reader {
             width: 100%;
-            display: none;
+            display: none; /* Скрыт до нажатия кнопки сканирования */
             margin-bottom: 10px;
             border-radius: 12px;
             overflow: hidden;
             background: #000;
         }
+        
         .notification {
             display: none;
             background-color: #333;
@@ -199,7 +202,7 @@
             });
 
             // 4. Отрисовка маркера пользователя с УЧЕТОМ КОМПАСА
-            ctx.save(); // Сохраняем состояние холста
+            ctx.save(); 
             // Переносим центр координат в точку, где стоит пользователь
             ctx.translate(userPos.x, userPos.y);
             
@@ -210,12 +213,10 @@
             ctx.rotate(rad);
 
             // Рисуем указатель (вектор направления взгляда)
-            // Он теперь всегда будет крутиться вместе с телефоном!
             ctx.strokeStyle = '#ff3b30';
             ctx.lineWidth = 8;
             ctx.beginPath();
             ctx.moveTo(0, 0);
-            // Линия рисуется вправо по оси X, но так как холст повернут, она укажет куда надо
             ctx.lineTo(60, 0); 
             ctx.stroke();
 
@@ -225,7 +226,7 @@
             ctx.arc(0, 0, 18, 0, Math.PI * 2);
             ctx.fill();
             
-            ctx.restore(); // Возвращаем холст в нормальное состояние (отменяем смещение и поворот)
+            ctx.restore(); // Возвращаем холст в нормальное состояние
         }
 
         drawMap(); // Первичная отрисовка
@@ -234,17 +235,15 @@
         function handleOrientation(event) {
             let heading = 0;
 
-            // iOS (Safari) выдает точный компас здесь
+            // iOS (Safari) выдает точный компас
             if (event.webkitCompassHeading) {
                 heading = event.webkitCompassHeading;
             } 
-            // Android (Chrome) выдает угол поворота от начального положения здесь
+            // Android (Chrome) выдает угол поворота от начального положения
             else if (event.alpha !== null) {
-                // Корректируем Android (он считает против часовой стрелки)
                 heading = 360 - event.alpha;
             }
 
-            // Сглаживаем вывод в UI для красоты
             currentHeading = heading;
             document.getElementById('compassHeading').innerText = Math.round(currentHeading) + '°';
             

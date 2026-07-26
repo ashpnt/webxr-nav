@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>PDR & Map Matching MVP</title>
+    <title>Compass & Turn-by-turn MVP</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -34,74 +34,58 @@
             font-weight: 600;
             cursor: pointer;
             color: white;
+            transition: background-color 0.2s;
         }
         #requestBtn { background-color: #007aff; }
-        #startBtn { background-color: #34c759; display: none; }
-        #stopBtn { background-color: #ff3b30; display: none; }
+        #nextPointBtn { background-color: #34c759; display: none; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
         
         .stats {
             display: flex;
-            justify-content: space-between;
+            flex-direction: column;
+            gap: 8px;
             margin-top: 10px;
             font-size: 14px;
             color: #666;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 8px;
         }
         .stats strong { color: #000; font-size: 16px; }
 
-        /* Контейнер для карты, чтобы она масштабировалась на мобильных */
         .map-container {
             width: 100%;
             max-width: 400px;
             background: white;
             border-radius: 12px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            overflow: hidden; /* Обрезаем всё, что вылезает за края */
+            overflow: hidden;
             position: relative;
         }
         canvas {
             display: block;
             width: 100%;
-            /* Высота задается через JS пропорционально ширине, но зададим базовую */
             height: auto; 
             aspect-ratio: 1 / 1;
             background-color: #e5e5ea;
         }
-        
-        /* Виртуальный компас для тестов поворота (пока ручной) */
-        .direction-controls {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 10px;
-            gap: 5px;
-        }
-        .direction-controls button {
-            background-color: #8e8e93;
-            margin: 0;
-            padding: 8px;
-            font-size: 14px;
-        }
-        .direction-controls button.active { background-color: #007aff; }
     </style>
 </head>
 <body>
 
     <div class="controls">
-        <h3 style="margin-top:0; margin-bottom: 15px; text-align: center;">Навигатор Выставки</h3>
-        <button id="requestBtn">1. Разрешить датчики</button>
-        <button id="startBtn">2. Старт с точки "Вход"</button>
-        <button id="stopBtn">Остановить</button>
+        <h3 style="margin-top:0; margin-bottom: 15px; text-align: center;">Навигатор Выставки (Компас)</h3>
+        
+        <button id="requestBtn">1. Включить компас (Старт)</button>
+        <button id="nextPointBtn">Подтвердить проход к: <span id="nextPointName">Поворот</span></button>
         
         <div class="stats">
-            <div>Шаги: <strong id="stepCount">0</strong></div>
-            <div>Статус: <strong id="statusText">Ожидание...</strong></div>
-        </div>
-
-        <div style="margin-top: 15px; font-size: 12px; color: #666; text-align: center;">Направление движения (симуляция компаса)</div>
-        <div class="direction-controls">
-            <button id="dirNorth" class="active">Север (↑)</button>
-            <button id="dirEast">Восток (→)</button>
-            <button id="dirSouth">Юг (↓)</button>
-            <button id="dirWest">Запад (←)</button>
+            <div style="display: flex; justify-content: space-between;">
+                <span>Текущая позиция:</span> <strong id="statusText">Вход</strong>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+                <span>Азимут (Компас):</span> <strong id="compassHeading">0°</strong>
+            </div>
         </div>
     </div>
 
@@ -110,53 +94,29 @@
     </div>
 
     <script>
-        //        // --- 1. ДАННЫЕ КАРТЫ (Из нашего nav_graph.json) ---
-        // Масштаб: 1 метр = 100 пикселей.
-        const SCALE = 100;
-        const STEP_LENGTH_METERS = 0.7;
-        const STEP_LENGTH_PIXELS = STEP_LENGTH_METERS * SCALE; // 70 пикселей на 1 шаг
-
+        // --- 1. ДАННЫЕ КАРТЫ (Наш граф) ---
         const graphNodes = {
             "start_qr": { x: 200, y: 600, name: "Вход" },
             "turn_1":   { x: 800, y: 600, name: "Поворот" },
             "end_point":{ x: 800, y: 300, name: "Цель" }
         };
 
+        // Задаем строгий маршрут (от старта до цели)
+        const route = ["start_qr", "turn_1", "end_point"];
+        let currentNodeIndex = 0; // Начинаем со старта
+
         // --- 2. ПЕРЕМЕННЫЕ СОСТОЯНИЯ ---
-        let isRecording = false;
-        let stepCount = 0;
-        
-        // Текущая позиция пользователя на холсте
-        let userPos = { x: graphNodes["start_qr"].x, y: graphNodes["start_qr"].y };
-        
-        // Направление движения (Вектор [x, y]). 
-        // По умолчанию смотрим на восток (вправо к повороту).
-        let currentDirection = { dx: 1, dy: 0 }; 
+        let userPos = { x: graphNodes[route[0]].x, y: graphNodes[route[0]].y };
+        let currentHeading = 0; // Угол поворота смартфона в градусах
 
-        //        // Переменные шагомера (из отлаженного кода)
-        let gravity = { x: 0, y: 0, z: 0 };
-        const GRAVITY_ALPHA = 0.8; 
-        let smoothedVerticalAccel = 0;
-        const SIGNAL_ALPHA = 0.3;
-        
-        // ВАШ ИДЕАЛЬНЫЙ ПОРОГ!
-        const STEP_THRESHOLD = 0.3; 
-        
-        let isLookingForPeak = true;
-        let peakValue = 0;
-        const MIN_TIME_BETWEEN_STEPS = 300; 
-        let lastStepTime = 0;
-
-        //        // --- 3. ИНИЦИАЛИЗАЦИЯ CANVAS И ОТРИСОВКА ---
         const canvas = document.getElementById('mapCanvas');
         const ctx = canvas.getContext('2d');
-        
-        // Функция для отрисовки всей сцены
+
+        // --- 3. ОТРИСОВКА КАРТЫ С КОМПАСОМ ---
         function drawMap() {
-            // Очищаем холст
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             
-            // 1. Рисуем сетку для наглядности масштаба (каждые 100px = 1м)
+            // Сетка
             ctx.strokeStyle = '#d1d1d6';
             ctx.lineWidth = 1;
             for(let i = 0; i < canvas.width; i+=100) {
@@ -164,7 +124,7 @@
                 ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(canvas.width, i); ctx.stroke();
             }
 
-            // 2. Рисуем линии графа (разрешенные пути)
+            // Рисуем линии маршрута
             ctx.strokeStyle = '#007aff';
             ctx.lineWidth = 10;
             ctx.lineCap = 'round';
@@ -176,7 +136,7 @@
             ctx.lineTo(graphNodes["end_point"].x, graphNodes["end_point"].y);
             ctx.stroke();
 
-            //            // 3. Рисуем узлы (точки)
+            // Рисуем узлы
             Object.values(graphNodes).forEach(node => {
                 ctx.fillStyle = 'white';
                 ctx.beginPath();
@@ -186,169 +146,117 @@
                 ctx.strokeStyle = '#007aff';
                 ctx.stroke();
                 
-                // Подписи
                 ctx.fillStyle = '#333';
                 ctx.font = '24px Arial';
                 ctx.fillText(node.name, node.x - 20, node.y + 40);
             });
 
-            // 4. Рисуем позицию пользователя (Красная точка)
+            // 4. Отрисовка маркера пользователя с УЧЕТОМ КОМПАСА
+            ctx.save(); // Сохраняем состояние холста
+            // Переносим центр координат в точку, где стоит пользователь
+            ctx.translate(userPos.x, userPos.y);
+            
+            // В Canvas 0 градусов - это направо (Восток).
+            // В компасе 0 градусов - это вверх (Север). 
+            // Корректируем угол: переводим в радианы и вычитаем 90 градусов (PI/2).
+            let rad = (currentHeading * Math.PI / 180) - (Math.PI / 2);
+            ctx.rotate(rad);
+
+            // Рисуем указатель (вектор направления взгляда)
+            // Он теперь всегда будет крутиться вместе с телефоном!
+            ctx.strokeStyle = '#ff3b30';
+            ctx.lineWidth = 8;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            // Линия рисуется вправо по оси X, но так как холст повернут, она укажет куда надо
+            ctx.lineTo(60, 0); 
+            ctx.stroke();
+
+            // Рисуем саму красную точку
             ctx.fillStyle = '#ff3b30';
             ctx.beginPath();
-            ctx.arc(userPos.x, userPos.y, 18, 0, Math.PI * 2);
+            ctx.arc(0, 0, 18, 0, Math.PI * 2);
             ctx.fill();
             
-            // Рисуем вектор направления пользователя
-            ctx.strokeStyle = '#ff3b30';
-            ctx.lineWidth = 6;
-            ctx.beginPath();
-            ctx.moveTo(userPos.x, userPos.y);
-            // Линия длиной 40 пикселей указывает направление
-            ctx.lineTo(userPos.x + (currentDirection.dx * 40), userPos.y + (currentDirection.dy * 40)); 
-            ctx.stroke();
+            ctx.restore(); // Возвращаем холст в нормальное состояние (отменяем смещение и поворот)
         }
 
-        // Первичная отрисовка карты при загрузке
-        drawMap();
+        drawMap(); // Первичная отрисовка
 
-        //        // --- 4. ЛОГИКА ДВИЖЕНИЯ И MAP MATCHING ---
-        function moveUserForward() {
-            // Рассчитываем новую позицию: Текущая + (Длина шага * Направление)
-            let newX = userPos.x + (STEP_LENGTH_PIXELS * currentDirection.dx);
-            let newY = userPos.y + (STEP_LENGTH_PIXELS * currentDirection.dy);
+        // --- 4. ОБРАБОТКА ДАННЫХ КОМПАСА ---
+        function handleOrientation(event) {
+            let heading = 0;
 
-            // --- БАЗОВЫЙ MAP MATCHING (Защита от прохождения сквозь стены) ---
-            // В MVP мы жестко ограничиваем координаты крайними узлами
-            
-            // Если идем на Восток, не даем зайти дальше x=800
-            if (currentDirection.dx > 0 && newX > graphNodes["turn_1"].x) {
-                newX = graphNodes["turn_1"].x; 
-                document.getElementById('statusText').innerText = "Достигнут поворот!";
-            }
-            // Если идем на Север (вверх по Y), не даем зайти дальше y=300
-            if (currentDirection.dy < 0 && newY < graphNodes["end_point"].y) {
-                newY = graphNodes["end_point"].y;
-                document.getElementById('statusText').innerText = "Достигнута цель!";
+            // iOS (Safari) выдает точный компас здесь
+            if (event.webkitCompassHeading) {
+                heading = event.webkitCompassHeading;
+            } 
+            // Android (Chrome) выдает угол поворота от начального положения здесь
+            else if (event.alpha !== null) {
+                // Корректируем Android (он считает против часовой стрелки)
+                heading = 360 - event.alpha;
             }
 
-            // Обновляем позицию
-            userPos.x = newX;
-            userPos.y = newY;
+            // Сглаживаем вывод в UI для красоты
+            currentHeading = heading;
+            document.getElementById('compassHeading').innerText = Math.round(currentHeading) + '°';
             
-            // Перерисовываем карту
+            // Перерисовываем карту с новым углом поворота стрелки
             drawMap();
         }
 
-        //        // --- 5. АЛГОРИТМ ШАГОМЕРА (Из предыдущего теста) ---
-        function handleMotion(event) {
-            if (!isRecording) return;
-            // Пытаемся получить данные с гравитацией, если нет - берем обычные
-            let acc = event.accelerationIncludingGravity || event.acceleration;
-            if (!acc || acc.x === null) return;
-            detectStepAdvanced(acc.x, acc.y, acc.z);
-        }
-
-        function detectStepAdvanced(x, y, z) {
-            if (gravity.x === 0 && gravity.y === 0 && gravity.z === 0) {
-                gravity.x = x; gravity.y = y; gravity.z = z;
-            } else {
-                gravity.x = GRAVITY_ALPHA * gravity.x + (1 - GRAVITY_ALPHA) * x;
-                gravity.y = GRAVITY_ALPHA * gravity.y + (1 - GRAVITY_ALPHA) * y;
-                gravity.z = GRAVITY_ALPHA * gravity.z + (1 - GRAVITY_ALPHA) * z;
-            }
-
-            let linearX = x - gravity.x;
-            let linearY = y - gravity.y;
-            let linearZ = z - gravity.z;
-
-            let norm = Math.sqrt(gravity.x*gravity.x + gravity.y*gravity.y + gravity.z*gravity.z);
-            let gNormX = gravity.x / norm;
-            let gNormY = gravity.y / norm;
-            let gNormZ = gravity.z / norm;
-
-            let verticalAccel = (linearX * gNormX) + (linearY * gNormY) + (linearZ * gNormZ);
-            smoothedVerticalAccel = SIGNAL_ALPHA * verticalAccel + (1 - SIGNAL_ALPHA) * smoothedVerticalAccel;
-
-            const currentTime = Date.now();
-            
-            if (smoothedVerticalAccel > STEP_THRESHOLD) {
-                isLookingForPeak = true;
-                if (smoothedVerticalAccel > peakValue) peakValue = smoothedVerticalAccel;
-            }
-            
-            if (isLookingForPeak && smoothedVerticalAccel < 0) {
-                if (peakValue >= STEP_THRESHOLD && (currentTime - lastStepTime) > MIN_TIME_BETWEEN_STEPS) {
-                    // --- ШАГ ЗАСЧИТАН! ---
-                    stepCount++;
-                    document.getElementById('stepCount').innerText = stepCount;
-                    lastStepTime = currentTime;
-                    
-                    // Двигаем точку на карте
-                    moveUserForward();
-                    
-                    // Визуальный отклик интерфейса
-                    document.body.style.backgroundColor = '#e8f5e9';
-                    setTimeout(() => { document.body.style.backgroundColor = '#f0f2f5'; }, 150);
-                }
-                isLookingForPeak = false;
-                peakValue = 0;
-            }
-        }
-
-        //        // --- 6. ОБРАБОТЧИКИ UI ---
+        // --- 5. ОБРАБОТЧИКИ КНОПОК ---
         document.getElementById('requestBtn').addEventListener('click', async () => {
-            if (typeof DeviceMotionEvent.requestPermission === 'function') {
+            // Запрос разрешений для iOS 13+
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
                 try {
-                    const permission = await DeviceMotionEvent.requestPermission();
+                    const permission = await DeviceOrientationEvent.requestPermission();
                     if (permission === 'granted') {
-                        document.getElementById('requestBtn').style.display = 'none';
-                        document.getElementById('startBtn').style.display = 'block';
-                    } else { alert('Доступ к датчикам отклонен.'); }
+                        window.addEventListener('deviceorientation', handleOrientation);
+                        startNavigation();
+                    } else { alert('Доступ к компасу отклонен.'); }
                 } catch (error) { console.error(error); }
             } else {
-                document.getElementById('requestBtn').style.display = 'none';
-                document.getElementById('startBtn').style.display = 'block';
+                // Для Android и ПК
+                window.addEventListener('deviceorientation', handleOrientation);
+                startNavigation();
             }
         });
 
-        document.getElementById('startBtn').addEventListener('click', () => {
-            isRecording = true;
-            document.getElementById('startBtn').style.display = 'none';
-            document.getElementById('stopBtn').style.display = 'block';
-            document.getElementById('statusText').innerText = "Идем к Повороту...";
-            window.addEventListener('devicemotion', handleMotion);
-            
-            // Задаем начальное направление на Восток (вправо)
-            setDirection('East');
-        });
-
-        document.getElementById('stopBtn').addEventListener('click', () => {
-            isRecording = false;
-            document.getElementById('stopBtn').style.display = 'none';
-            document.getElementById('startBtn').style.display = 'block';
-            document.getElementById('statusText').innerText = "Пауза";
-            window.removeEventListener('devicemotion', handleMotion);
-        });
-
-        //        // Кнопки симуляции компаса
-        function setDirection(dir) {
-            // Сброс стилей кнопок
-            document.querySelectorAll('.direction-controls button').forEach(b => b.classList.remove('active'));
-            
-            // Вектор dx, dy (1 = вправо/вниз, -1 = влево/вверх)
-            if(dir === 'North') { currentDirection = {dx: 0, dy: -1}; document.getElementById('dirNorth').classList.add('active'); }
-            if(dir === 'East')  { currentDirection = {dx: 1, dy: 0};  document.getElementById('dirEast').classList.add('active'); }
-            if(dir === 'South') { currentDirection = {dx: 0, dy: 1};  document.getElementById('dirSouth').classList.add('active'); }
-            if(dir === 'West')  { currentDirection = {dx: -1, dy: 0}; document.getElementById('dirWest').classList.add('active'); }
-            
-            drawMap(); // Перерисовать маркер с новым вектором направления
+        function startNavigation() {
+            document.getElementById('requestBtn').style.display = 'none';
+            document.getElementById('nextPointBtn').style.display = 'block';
+            updateUI();
         }
 
-        document.getElementById('dirNorth').addEventListener('click', () => setDirection('North'));
-        document.getElementById('dirEast').addEventListener('click',  () => setDirection('East'));
-        document.getElementById('dirSouth').addEventListener('click', () => setDirection('South'));
-        document.getElementById('dirWest').addEventListener('click',  () => setDirection('West'));
+        // Ручное продвижение по маршруту
+        document.getElementById('nextPointBtn').addEventListener('click', () => {
+            if (currentNodeIndex < route.length - 1) {
+                currentNodeIndex++;
+                
+                // Перемещаем точку на следующий узел
+                let nextNodeId = route[currentNodeIndex];
+                userPos.x = graphNodes[nextNodeId].x;
+                userPos.y = graphNodes[nextNodeId].y;
+                
+                updateUI();
+                drawMap();
+            }
+        });
 
+        function updateUI() {
+            let currentNodeId = route[currentNodeIndex];
+            document.getElementById('statusText').innerText = graphNodes[currentNodeId].name;
+
+            if (currentNodeIndex < route.length - 1) {
+                let nextNodeId = route[currentNodeIndex + 1];
+                document.getElementById('nextPointName').innerText = graphNodes[nextNodeId].name;
+            } else {
+                document.getElementById('nextPointBtn').innerText = "Вы прибыли на место!";
+                document.getElementById('nextPointBtn').disabled = true;
+                document.getElementById('nextPointBtn').style.backgroundColor = '#8e8e93';
+            }
+        }
     </script>
 </body>
 </html>

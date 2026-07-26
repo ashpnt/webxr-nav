@@ -70,6 +70,7 @@
         <div class="data-row"><span>Ось Y:</span> <strong id="valY">0.00</strong></div>
         <div class="data-row"><span>Ось Z (вверх-вниз):</span> <strong id="valZ">0.00</strong></div>
         <div class="data-row"><span>Магнитуда вектора:</span> <strong id="valMag">0.00</strong></div>
+        <div class="data-row" style="color: #666;"><span>Сглаженная магнитуда:</span> <strong id="valSmooth">0.00</strong></div>
     </div>
 
     <script>
@@ -81,16 +82,28 @@
         const valY = document.getElementById('valY');
         const valZ = document.getElementById('valZ');
         const valMag = document.getElementById('valMag');
+        const valSmooth = document.getElementById('valSmooth');
         const stepCountDisplay = document.getElementById('stepCountDisplay');
 
         // Переменные для алгоритма шагомера
         let stepCount = 0;
         let isRecording = false;
         
-        // Параметры детектора шагов (потребуют калибровки под реальный телефон)
-        const THRESHOLD = 1.2; // Порог ускорения для фиксации шага (m/s^2)
-        const MIN_TIME_BETWEEN_STEPS = 300; // Минимальное время между шагами в мс (чтобы не считать 1 шаг дважды)
+        // --- НАСТРОЙКИ АЛГОРИТМА ---
+        // 1. Сглаживание (от 0 до 1). Чем меньше, тем сильнее сглаживание (меньше реакция на дрожь).
+        const ALPHA = 0.15; 
+        let smoothedMag = 0;
+
+        // 2. Временные рамки шага
+        const MIN_TIME_BETWEEN_STEPS = 350; // Человек редко шагает быстрее 3 раз в сек (333ms)
+        const MAX_TIME_BETWEEN_STEPS = 2000; // Если пауза дольше 2 сек, серия шагов прервалась
         let lastStepTime = 0;
+
+        // 3. Динамический анализ пиков (Peak Detection)
+        const PEAK_THRESHOLD = 1.5; // Минимальная разница между пиком и спадом, чтобы считать это шагом
+        let minMag = 999;
+        let maxMag = -999;
+        let isPeakLooking = true; // Флаг: ищем ли мы сейчас максимум (пик) или минимум (впадину)
 
         // Запрос разрешений (Обязательно для iOS 13+)
         requestBtn.addEventListener('click', async () => {
@@ -118,23 +131,19 @@
             if (!isRecording) return;
 
             // Используем ускорение БЕЗ учета гравитации (если доступно).
-            // Если нет, используем event.accelerationIncludingGravity и вычитаем гравитацию сами (здесь упрощенный вариант).
             let acc = event.acceleration;
             
-            // Запасной вариант, если чистое ускорение недоступно (например, на некоторых старых Android)
+            // Если чистое ускорение недоступно, берем с гравитацией (хуже, но работает)
             if (!acc || acc.x === null) {
                 acc = event.accelerationIncludingGravity;
-                // В идеале здесь нужно применять Low-Pass Filter для удаления гравитации, 
-                // но для грубого MVP оставим так.
             }
 
-            if (acc.x !== null) {
+            if (acc && acc.x !== null) {
                 valX.innerText = acc.x.toFixed(2);
                 valY.innerText = acc.y.toFixed(2);
                 valZ.innerText = acc.z.toFixed(2);
 
                 // Вычисляем магнитуду вектора ускорения (общую силу движения во все стороны)
-                // Формула: sqrt(x^2 + y^2 + z^2)
                 const magnitude = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
                 valMag.innerText = magnitude.toFixed(2);
 
@@ -142,19 +151,58 @@
             }
         }
 
-        // Простейший алгоритм детекции шагов (Peak Detection)
-        function detectStep(magnitude) {
+        // УЛУЧШЕННЫЙ алгоритм детекции шагов (EMA + Dynamic Peak Detection)
+        function detectStep(rawMagnitude) {
+            // 1. Сглаживаем сырые данные (убираем шум от дрожи рук)
+            // Инициализация при первом запуске
+            if (smoothedMag === 0) smoothedMag = rawMagnitude; 
+            
+            // Формула экспоненциального скользящего среднего
+            smoothedMag = ALPHA * rawMagnitude + (1 - ALPHA) * smoothedMag;
+            valSmooth.innerText = smoothedMag.toFixed(2);
+
             const currentTime = Date.now();
             
-            // Если магнитуда превышает порог и прошло достаточно времени с прошлого шага
-            if (magnitude > THRESHOLD && (currentTime - lastStepTime > MIN_TIME_BETWEEN_STEPS)) {
-                stepCount++;
-                stepCountDisplay.innerText = stepCount;
-                lastStepTime = currentTime;
-                
-                // Визуальный отклик
-                document.body.style.backgroundColor = '#e8f5e9';
-                setTimeout(() => { document.body.style.backgroundColor = '#f5f5f5'; }, 150);
+            // 2. Ищем пики и впадины на сглаженном графике
+            if (isPeakLooking) {
+                // Если мы идем вверх, обновляем максимум
+                if (smoothedMag > maxMag) {
+                    maxMag = smoothedMag;
+                } else if (maxMag - smoothedMag > PEAK_THRESHOLD) {
+                    // Если график начал падать и упал ниже максимума на величину порога - ПИК НАЙДЕН
+                    // Но это еще не шаг. Шаг засчитывается только после полного цикла (вниз-вверх).
+                    isPeakLooking = false; 
+                    minMag = smoothedMag; // Начинаем искать минимум
+                }
+            } else {
+                // Если мы идем вниз, обновляем минимум
+                if (smoothedMag < minMag) {
+                    minMag = smoothedMag;
+                } else if (smoothedMag - minMag > PEAK_THRESHOLD) {
+                    // Если график начал расти и поднялся выше минимума на величину порога - ВПАДИНА НАЙДЕНА
+                    // Это значит, что нога опустилась и цикл шага завершен!
+                    
+                    isPeakLooking = true; // Снова начинаем искать пик
+                    maxMag = smoothedMag; // Сбрасываем максимум для следующего шага
+                    
+                    // 3. Финальная проверка по времени (отсекаем случайные быстрые взмахи)
+                    const timeSinceLastStep = currentTime - lastStepTime;
+                    
+                    if (timeSinceLastStep > MIN_TIME_BETWEEN_STEPS && timeSinceLastStep < MAX_TIME_BETWEEN_STEPS) {
+                        // ЭТО НАСТОЯЩИЙ ШАГ
+                        stepCount++;
+                        stepCountDisplay.innerText = stepCount;
+                        lastStepTime = currentTime;
+                        
+                        // Визуальный отклик
+                        document.body.style.backgroundColor = '#e8f5e9';
+                        setTimeout(() => { document.body.style.backgroundColor = '#f5f5f5'; }, 150);
+                    } else if (timeSinceLastStep >= MAX_TIME_BETWEEN_STEPS) {
+                        // Если была долгая пауза, мы не засчитываем этот всплеск как шаг,
+                        // но обновляем таймер, чтобы следующий шаг в новой серии мог быть засчитан.
+                        lastStepTime = currentTime;
+                    }
+                }
             }
         }
 

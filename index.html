@@ -1,325 +1,177 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru">
-  <head>
-    <title>WebXR QR & Image Marker Navigation | XR Blocks</title>
-
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0, user-scalable=no"
-    />
-    <link type="text/css" rel="stylesheet" href="https://xrblocks.github.io/css/xr.css" />
-    <script>
-      window.litDisableBundleWarning = true;
-    </script>
-    <script type="importmap">
-      {
-        "imports": {
-          "three": "https://cdn.jsdelivr.net/npm/three@0.182.0/build/three.module.js",
-          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/",
-          "troika-three-text": "https://cdn.jsdelivr.net/gh/protectwise/troika@028b81cf308f0f22e5aa8e78196be56ec1997af5/packages/troika-three-text/src/index.js",
-          "troika-three-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-three-utils/src/index.js",
-          "troika-worker-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-worker-utils/src/index.js",
-          "bidi-js": "https://esm.sh/bidi-js@%5E1.0.2?target=es2022",
-          "webgl-sdf-generator": "https://esm.sh/webgl-sdf-generator@1.1.1/es2022/webgl-sdf-generator.mjs",
-          "lit": "https://cdn.jsdelivr.net/gh/lit/dist@3/core/lit-core.min.js",
-          "lit/": "https://esm.run/lit@3/",
-          "xrblocks": "https://cdn.jsdelivr.net/npm/xrblocks@0.14.1/build/xrblocks.js",
-          "xrblocks/addons/": "https://cdn.jsdelivr.net/npm/xrblocks@0.14.1/build/addons/"
-        }
-      }
-    </script>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDR Sandbox: Акселерометр и Шагомер</title>
     <style>
-      body {
-        background-color: #000000;
-        margin: 0;
-        overflow: hidden;
-      }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            padding: 20px;
+            max-width: 500px;
+            margin: 0 auto;
+            background-color: #f5f5f5;
+        }
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 15px 20px;
+            font-size: 16px;
+            border-radius: 8px;
+            width: 100%;
+            cursor: pointer;
+            margin-bottom: 10px;
+        }
+        button:active {
+            background-color: #0056b3;
+        }
+        .data-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .big-number {
+            font-size: 32px;
+            font-weight: bold;
+            color: #28a745;
+            text-align: center;
+            margin: 10px 0;
+        }
     </style>
-  </head>
+</head>
+<body>
 
-  <body>
-    <script type="module">
-import 'xrblocks/addons/simulator/SimulatorAddons.js';
-import * as THREE from 'three';
-import * as xb from 'xrblocks';
+    <div class="card">
+        <h2>Шагомер (PDR)</h2>
+        <p>Держите телефон ровно перед собой.</p>
+        <button id="requestBtn">1. Разрешить доступ к датчикам</button>
+        <button id="startBtn" style="display: none; background-color: #28a745;">2. Начать запись</button>
+        <button id="stopBtn" style="display: none; background-color: #dc3545;">Остановить</button>
+    </div>
 
-// Координаты комнат относительно отсканированного QR-маркера (в метрах)
-const DESTINATIONS = {
-  room_a: { name: 'Конференц-зал А', pos: new THREE.Vector3(-2.5, 0, -4.5) },
-  lab: { name: 'IT Лаборатория', pos: new THREE.Vector3(3.2, 0, -6.0) },
-  exit: { name: 'Выход / Ресепшен', pos: new THREE.Vector3(0, 0, 4.0) }
-};
+    <div class="card">
+        <h3 style="text-align: center; margin-top: 0;">Шагов сделано:</h3>
+        <div class="big-number" id="stepCountDisplay">0</div>
+    </div>
 
-class MarkerNavigationScript extends xb.Script {
-  constructor() {
-    super();
-    this.deviceCamera = null;
-    this.markerPlaced = false;
-    this.markerPosition = new THREE.Vector3();
-    this.selectedDestination = 'room_a';
-    
-    // Ссылки на 3D объекты
-    this.markerVisual = null;
-    this.arrowHelper = null;
-    this.pathChevrons = [];
-    this.time = 0;
-  }
+    <div class="card">
+        <h3>Сырые данные (Акселерометр без гравитации)</h3>
+        <div class="data-row"><span>Ось X:</span> <strong id="valX">0.00</strong></div>
+        <div class="data-row"><span>Ось Y:</span> <strong id="valY">0.00</strong></div>
+        <div class="data-row"><span>Ось Z (вверх-вниз):</span> <strong id="valZ">0.00</strong></div>
+        <div class="data-row"><span>Магнитуда вектора:</span> <strong id="valMag">0.00</strong></div>
+    </div>
 
-  async init() {
-    this.deviceCamera = xb.core.deviceCamera;
-    
-    // 1. Добавление мягкого освещения
-    this.add(new THREE.HemisphereLight(0xffffff, 0x555555, 3));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 2);
-    dirLight.position.set(2, 4, 1);
-    this.add(dirLight);
+    <script>
+        // Элементы UI
+        const requestBtn = document.getElementById('requestBtn');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const valX = document.getElementById('valX');
+        const valY = document.getElementById('valY');
+        const valZ = document.getElementById('valZ');
+        const valMag = document.getElementById('valMag');
+        const stepCountDisplay = document.getElementById('stepCountDisplay');
 
-    // 2. Создание пространственного UI управления
-    this.createNavigationPanel();
+        // Переменные для алгоритма шагомера
+        let stepCount = 0;
+        let isRecording = false;
+        
+        // Параметры детектора шагов (потребуют калибровки под реальный телефон)
+        const THRESHOLD = 1.2; // Порог ускорения для фиксации шага (m/s^2)
+        const MIN_TIME_BETWEEN_STEPS = 300; // Минимальное время между шагами в мс (чтобы не считать 1 шаг дважды)
+        let lastStepTime = 0;
 
-    // 3. Создание 3D шаблона для маркера (визуальная рамка сканирования)
-    this.createMarkerVisual();
+        // Запрос разрешений (Обязательно для iOS 13+)
+        requestBtn.addEventListener('click', async () => {
+            if (typeof DeviceMotionEvent.requestPermission === 'function') {
+                try {
+                    const permission = await DeviceMotionEvent.requestPermission();
+                    if (permission === 'granted') {
+                        requestBtn.style.display = 'none';
+                        startBtn.style.display = 'block';
+                    } else {
+                        alert('Доступ к датчикам отклонен.');
+                    }
+                } catch (error) {
+                    console.error('Ошибка запроса разрешений:', error);
+                }
+            } else {
+                // Для Android и старых iOS разрешения не требуются явным образом
+                requestBtn.style.display = 'none';
+                startBtn.style.display = 'block';
+            }
+        });
 
-    // 4. Включение отображения ретикла (прицела) на поверхностях
-    xb.showReticleOnDepthMesh(true);
-  }
+        // Обработчик данных акселерометра
+        function handleMotion(event) {
+            if (!isRecording) return;
 
-  // Создание футуристичного стеклянного UI-интерфейса
-  createNavigationPanel() {
-    this.panel = new xb.SpatialPanel({
-      width: 1.4,
-      height: 1.1,
-      backgroundColor: '#11151caa',
-      useDefaultPosition: false
-    });
-    
-    // Размещаем панель перед пользователем на комфортной высоте
-    this.panel.position.set(0, 1.4, -1.2);
-    this.panel.isRoot = true;
-    this.add(this.panel);
+            // Используем ускорение БЕЗ учета гравитации (если доступно).
+            // Если нет, используем event.accelerationIncludingGravity и вычитаем гравитацию сами (здесь упрощенный вариант).
+            let acc = event.acceleration;
+            
+            // Запасной вариант, если чистое ускорение недоступно (например, на некоторых старых Android)
+            if (!acc || acc.x === null) {
+                acc = event.accelerationIncludingGravity;
+                // В идеале здесь нужно применять Low-Pass Filter для удаления гравитации, 
+                // но для грубого MVP оставим так.
+            }
 
-    const grid = this.panel.addGrid();
+            if (acc.x !== null) {
+                valX.innerText = acc.x.toFixed(2);
+                valY.innerText = acc.y.toFixed(2);
+                valZ.innerText = acc.z.toFixed(2);
 
-    // Ряд 1: Заголовок и статус калибровки
-    const statusRow = grid.addRow({ weight: 0.2 });
-    this.statusText = statusRow.addText({
-      text: 'Шаг 1: Наведите на QR / маркер и нажмите на экран',
-      fontSize: 0.045,
-      fontColor: '#00f0ff'
-    });
+                // Вычисляем магнитуду вектора ускорения (общую силу движения во все стороны)
+                // Формула: sqrt(x^2 + y^2 + z^2)
+                const magnitude = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
+                valMag.innerText = magnitude.toFixed(2);
 
-    // Ряд 2: Видео-стрим с камеры (имитация работы сканера)
-    const streamRow = grid.addRow({ weight: 0.45 });
-    this.videoView = new xb.VideoView({
-      width: 1.0,
-      height: 0.8,
-      mode: 'stretch'
-    });
-    streamRow.add(this.videoView);
-    if (this.deviceCamera) {
-      this.videoView.load(this.deviceCamera);
-    }
+                detectStep(magnitude);
+            }
+        }
 
-    // Ряд 3: Выбор маршрута
-    const navButtonsRow = grid.addRow({ weight: 0.35 });
-    
-    // Кнопка направления 1
-    const btnA = navButtonsRow.addCol({ weight: 0.33 }).addTextButton({
-      text: 'Зал А',
-      backgroundColor: '#1f2937',
-      fontColor: '#ffffff',
-      fontSize: 0.16
-    });
-    btnA.onTriggered = () => this.selectRoute('room_a');
+        // Простейший алгоритм детекции шагов (Peak Detection)
+        function detectStep(magnitude) {
+            const currentTime = Date.now();
+            
+            // Если магнитуда превышает порог и прошло достаточно времени с прошлого шага
+            if (magnitude > THRESHOLD && (currentTime - lastStepTime > MIN_TIME_BETWEEN_STEPS)) {
+                stepCount++;
+                stepCountDisplay.innerText = stepCount;
+                lastStepTime = currentTime;
+                
+                // Визуальный отклик
+                document.body.style.backgroundColor = '#e8f5e9';
+                setTimeout(() => { document.body.style.backgroundColor = '#f5f5f5'; }, 150);
+            }
+        }
 
-    // Кнопка направления 2
-    const btnLab = navButtonsRow.addCol({ weight: 0.33 }).addTextButton({
-      text: 'Лаборатория',
-      backgroundColor: '#1f2937',
-      fontColor: '#ffffff',
-      fontSize: 0.16
-    });
-    btnLab.onTriggered = () => this.selectRoute('lab');
+        // Управление записью
+        startBtn.addEventListener('click', () => {
+            isRecording = true;
+            startBtn.style.display = 'none';
+            stopBtn.style.display = 'block';
+            window.addEventListener('devicemotion', handleMotion);
+        });
 
-    // Кнопка направления 3
-    const btnExit = navButtonsRow.addCol({ weight: 0.33 }).addTextButton({
-      text: 'Выход',
-      backgroundColor: '#1f2937',
-      fontColor: '#ffffff',
-      fontSize: 0.16
-    });
-    btnExit.onTriggered = () => this.selectRoute('exit');
-
-    this.panel.updateLayouts();
-  }
-
-  // Создает 3D-модель маркера с эффектом голограммы
-  createMarkerVisual() {
-    this.markerVisual = new THREE.Group();
-    this.markerVisual.visible = false;
-
-    // Круглая светящаяся основа
-    const ringGeo = new THREE.RingGeometry(0.18, 0.2, 32);
-    const ringMat = new THREE.MeshBasicMaterial({ 
-      color: 0x00ffcc, 
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.8
-    });
-    const ring = new THREE.Mesh(ringGeo, ringMat);
-    ring.rotation.x = -Math.PI / 2;
-    this.markerVisual.add(ring);
-
-    // Центральная плоскость (QR код)
-    const centerGeo = new THREE.PlaneGeometry(0.24, 0.24);
-    const canvas = document.createElement('canvas');
-    canvas.width = 128;
-    canvas.height = 128;
-    const ctx = canvas.getContext('2d');
-    
-    // Рисуем абстрактный QR-код/маркер
-    ctx.fillStyle = '#00ffcc';
-    ctx.fillRect(0, 0, 128, 128);
-    ctx.fillStyle = '#11151c';
-    ctx.fillRect(8, 8, 112, 112);
-    // Внутренние квадраты
-    ctx.fillStyle = '#00ffcc';
-    ctx.fillRect(16, 16, 32, 32);
-    ctx.fillRect(80, 16, 32, 32);
-    ctx.fillRect(16, 80, 32, 32);
-    ctx.fillRect(40, 40, 48, 48);
-
-    const texture = new THREE.CanvasTexture(canvas);
-    const centerMat = new THREE.MeshBasicMaterial({ 
-      map: texture, 
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.9
-    });
-    const qrPlane = new THREE.Mesh(centerGeo, centerMat);
-    qrPlane.rotation.x = -Math.PI / 2;
-    qrPlane.position.y = 0.005;
-    this.markerVisual.add(qrPlane);
-
-    // Добавляем маркер в сцену
-    this.add(this.markerVisual);
-  }
-
-  // Логика переключения целей навигации
-  selectRoute(destKey) {
-    this.selectedDestination = destKey;
-    const dest = DESTINATIONS[destKey];
-    
-    if (this.markerPlaced) {
-      this.statusText.setText(`Маршрут построен: ${dest.name}`);
-      this.rebuildPath();
-    } else {
-      this.statusText.setText(`Цель: ${dest.name}. Сначала отсканируйте маркер!`);
-    }
-  }
-
-  // Обработчик нажатия в AR/Симуляторе
-  onSelectStart(event) {
-    const controller = event.target;
-    const intersection = xb.core.user.select(xb.core.depth.depthMesh, controller);
-    
-    if (intersection) {
-      // Ставим виртуальный QR-маркер в точку клика
-      this.markerPlaced = true;
-      this.markerPosition.copy(intersection.point);
-      
-      this.markerVisual.position.copy(intersection.point);
-      this.markerVisual.visible = true;
-
-      // Рассчитываем и визуализируем маршрут
-      const dest = DESTINATIONS[this.selectedDestination];
-      this.statusText.setText(`Калибровка успешна! Маршрут до: ${dest.name}`);
-      this.rebuildPath();
-    }
-  }
-
-  // Генерация анимированных 3D-стрелок (шевронов) к цели
-  rebuildPath() {
-    // Очищаем старый путь
-    this.pathChevrons.forEach(chevron => this.remove(chevron));
-    this.pathChevrons = [];
-
-    if (!this.markerPlaced) return;
-
-    // Конечная точка рассчитывается относительно маркера
-    const offset = DESTINATIONS[this.selectedDestination].pos;
-    const startPoint = this.markerPosition.clone();
-    const endPoint = this.markerPosition.clone().add(offset);
-
-    // Рисуем цепочку навигационных стрелок
-    const distance = startPoint.distanceTo(endPoint);
-    const numPoints = Math.max(3, Math.floor(distance / 0.5)); // шаг в 50см
-
-    for (let i = 1; i <= numPoints; i++) {
-      const t = i / numPoints;
-      const point = new THREE.Vector3().lerpVectors(startPoint, endPoint, t);
-      
-      // Создаем голографическую стрелку (конус)
-      const arrowGeo = new THREE.ConeGeometry(0.06, 0.15, 4);
-      const arrowMat = new THREE.MeshPhongMaterial({
-        color: 0x00ffcc,
-        emissive: 0x005544,
-        transparent: true,
-        opacity: 0.75,
-        flatShading: true
-      });
-      const arrow = new THREE.Mesh(arrowGeo, arrowMat);
-      
-      // Позиционируем навигационную точку
-      arrow.position.copy(point);
-      arrow.position.y += 0.1; // Слегка приподнимаем над полом
-
-      // Направляем стрелку в сторону движения
-      const direction = new THREE.Vector3().subVectors(endPoint, startPoint).normalize();
-      const mx = new THREE.Matrix4().lookAt(new THREE.Vector3(), direction, new THREE.Vector3(0, 1, 0));
-      const qt = new THREE.Quaternion().setFromRotationMatrix(mx);
-      arrow.quaternion.copy(qt);
-      arrow.rotateX(Math.PI / 2); // Сдвигаем конус, чтобы он указывал вперед
-
-      this.add(arrow);
-      this.pathChevrons.push(arrow);
-    }
-  }
-
-  // Обновление анимаций в каждом кадре
-  update() {
-    const deltaTime = xb.getDeltaTime();
-    this.time += deltaTime;
-
-    // 1. Анимация вращения плоскости маркера
-    if (this.markerPlaced && this.markerVisual) {
-      this.markerVisual.rotation.y += 0.5 * deltaTime;
-    }
-
-    // 2. Эффект бегущих огней на навигационных стрелках
-    this.pathChevrons.forEach((chevron, index) => {
-      // Синусоидальное покачивание по высоте и пульсация цвета
-      const wave = Math.sin(this.time * 4 - index * 0.8);
-      chevron.position.y = (this.markerPosition.y + 0.1) + wave * 0.03;
-      
-      // Эффект яркости (бегущая волна)
-      if (chevron.material) {
-        chevron.material.opacity = 0.4 + (wave + 1) * 0.3;
-      }
-    });
-  }
-}
-
-document.addEventListener('DOMContentLoaded', function () {
-  const options = new xb.Options();
-  options.enableUI();
-  options.enableCamera('environment'); // Запуск камеры устройства
-  options.enableDepth(); // Включение 3D-карты окружения
-  options.setAppTitle('Visual Marker Navigation');
-
-  xb.add(new MarkerNavigationScript());
-  xb.init(options);
-});
-</script>
-  </body>
+        stopBtn.addEventListener('click', () => {
+            isRecording = false;
+            stopBtn.style.display = 'none';
+            startBtn.style.display = 'block';
+            window.removeEventListener('devicemotion', handleMotion);
+        });
+    </script>
+</body>
 </html>

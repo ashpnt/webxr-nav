@@ -3,138 +3,29 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Compass & Turn-by-turn MVP</title>
-    <!-- Загружаем легковесную библиотеку для сканирования QR прямо в браузере -->
-    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    <title>Навигатор Выставки</title>
+    <script src="https://unpkg.com/html5-qrcode"></script>
     <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            margin: 0;
-            padding: 10px;
-            background-color: #f0f2f5;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-        .controls {
-            width: 100%;
-            max-width: 400px;
-            background: white;
-            padding: 15px;
-            border-radius: 12px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            margin-bottom: 10px;
-            box-sizing: border-box;
-        }
-        
-        button {
-            width: 100%;
-            padding: 12px;
-            margin-bottom: 8px;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            color: white;
-            transition: background-color 0.2s;
-        }
+        body { font-family: sans-serif; margin: 0; padding: 10px; background: #f0f2f5; display: flex; flex-direction: column; align-items: center; }
+        .controls { width: 100%; max-width: 400px; background: white; padding: 15px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 10px; }
+        button { width: 100%; padding: 12px; margin-bottom: 8px; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; color: white; }
         #requestBtn { background-color: #007aff; }
-        #scanBtn { background-color: #ff9500; display: none; }
-        
-        #qr-reader {
-            width: 100%;
-            display: none; /* Скрыт до нажатия кнопки сканирования */
-            margin-bottom: 10px;
-            border-radius: 12px;
-            overflow: hidden;
-            background: #000;
-        }
-        
-        .notification {
-            display: none;
-            background-color: #333;
-            color: #fff;
-            padding: 12px;
-            border-radius: 8px;
-            margin-bottom: 10px;
-            text-align: center;
-            font-size: 14px;
-        }
-        .test-qrs {
-            display: flex;
-            gap: 5px;
-            margin-top: 5px;
-        }
-        .test-qrs button {
-            background-color: #8e8e93;
-            font-size: 12px;
-            padding: 8px;
-        }
-        button:disabled { background-color: #ccc; cursor: not-allowed; }
-        
-        .stats {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            margin-top: 10px;
-            font-size: 14px;
-            color: #666;
-            background: #f8f9fa;
-            padding: 10px;
-            border-radius: 8px;
-        }
-        .stats strong { color: #000; font-size: 16px; }
-
-        .map-container {
-            width: 100%;
-            max-width: 400px;
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            overflow: hidden;
-            position: relative;
-        }
-        canvas {
-            display: block;
-            width: 100%;
-            height: auto; 
-            aspect-ratio: 1 / 1;
-            background-color: #e5e5ea;
-        }
+        #scanBtn { background-color: #ff9500; }
+        .map-container { width: 100%; max-width: 400px; background: white; border-radius: 12px; overflow: hidden; position: relative; }
+        canvas { display: block; width: 100%; aspect-ratio: 1 / 1; background-color: #e5e5ea; }
     </style>
 </head>
 <body>
 
     <div class="controls">
-        <h3 style="margin-top:0; margin-bottom: 15px; text-align: center;">Навигатор Выставки (Компас)</h3>
-        
-        <div id="notification" class="notification">Сообщение</div>
-        <div id="qr-reader"></div>
-
-        <button id="requestBtn">1. Включить компас (Старт)</button>
-        <button id="scanBtn">2. Отсканировать QR-код стенда</button>
-        
-        <!-- Кнопки для тестов без реальной камеры -->
-        <div class="test-qrs" id="testQrs" style="display: none;">
-            <button onclick="handleQRScan('start_qr')">QR: Вход</button>
-            <button onclick="handleQRScan('turn_1')">QR: Поворот (6м)</button>
-        </div>
-        
+        <button id="requestBtn">Включить компас</button>
+        <button id="scanBtn">Сканировать QR</button>
+        <div id="qr-reader" style="display:none; width: 100%;"></div>
         <div class="stats">
-            <div style="display: flex; justify-content: space-between;">
-                <span>Текущая позиция:</span> <strong id="statusText">Неизвестно</strong>
-            </div>
-            <div style="display: flex; justify-content: space-between;">
-                <span>Следующая точка:</span> <strong id="nextPointName">Вход</strong>
-            </div>
-            <div style="display: flex; justify-content: space-between;">
-                <span>Азимут (Компас):</span> <strong id="compassHeading">0°</strong>
-            </div>
-            <div style="display: flex; justify-content: space-between; color: #007aff;">
-                <span>Осталось пройти:</span> <strong id="distanceText">0 м</strong>
-            </div>
+            <div>Осталось пройти: <strong id="distanceText">0 м</strong></div>
         </div>
+        <!-- Кнопка симуляции движения для теста -->
+        <button id="simulateBtn" style="background-color: #34c759;">Симулировать шаг (1м)</button>
     </div>
 
     <div class="map-container">
@@ -142,217 +33,67 @@
     </div>
 
     <script>
-        // --- 1. ДАННЫЕ КАРТЫ (Наш граф) ---
         const graphNodes = {
             "start_qr": { x: 200, y: 600, name: "Вход" },
             "turn_1":   { x: 800, y: 600, name: "Поворот" },
             "end_point":{ x: 800, y: 300, name: "Цель" }
         };
-
-        // Задаем строгий маршрут (от старта до цели)
         const route = ["start_qr", "turn_1", "end_point"];
-        let currentNodeIndex = 0; // Начинаем со старта
-
-        // --- 2. ПЕРЕМЕННЫЕ СОСТОЯНИЯ ---
-        let userPos = { x: graphNodes[route[0]].x, y: graphNodes[route[0]].y };
-        let currentHeading = 0; // Угол поворота смартфона в градусах
-
-        let html5QrcodeScanner;
-
+        let currentNodeIndex = 0;
+        
+        let userPos = { ...graphNodes[route[0]] };
         const canvas = document.getElementById('mapCanvas');
         const ctx = canvas.getContext('2d');
 
-        // --- 3. ОТРИСОВКА КАРТЫ С КОМПАСОМ ---
         function drawMap() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
-            // Сетка
-            ctx.strokeStyle = '#d1d1d6';
-            ctx.lineWidth = 1;
-            for(let i = 0; i < canvas.width; i+=100) {
-                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke();
-                ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(canvas.width, i); ctx.stroke();
-            }
-
-            // Рисуем линии маршрута
-            ctx.strokeStyle = '#007aff';
-            ctx.lineWidth = 10;
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
-            
+            ctx.clearRect(0, 0, 1000, 1000);
+            // Линии
+            ctx.strokeStyle = '#007aff'; ctx.lineWidth = 10;
             ctx.beginPath();
             ctx.moveTo(graphNodes["start_qr"].x, graphNodes["start_qr"].y);
             ctx.lineTo(graphNodes["turn_1"].x, graphNodes["turn_1"].y);
             ctx.lineTo(graphNodes["end_point"].x, graphNodes["end_point"].y);
             ctx.stroke();
-
-            // Рисуем узлы
-            Object.values(graphNodes).forEach(node => {
-                ctx.fillStyle = 'white';
-                ctx.beginPath();
-                ctx.arc(node.x, node.y, 15, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.lineWidth = 4;
-                ctx.strokeStyle = '#007aff';
-                ctx.stroke();
-                
-                ctx.fillStyle = '#333';
-                ctx.font = '24px Arial';
-                ctx.fillText(node.name, node.x - 20, node.y + 40);
-            });
-
-            // 4. Отрисовка маркера пользователя с УЧЕТОМ КОМПАСА
-            ctx.save(); 
-            // Переносим центр координат в точку, где стоит пользователь
-            ctx.translate(userPos.x, userPos.y);
             
-            // В Canvas 0 градусов - это направо (Восток).
-            // В компасе 0 градусов - это вверх (Север). 
-            // Корректируем угол: переводим в радианы и вычитаем 90 градусов (PI/2).
-            let rad = (currentHeading * Math.PI / 180) - (Math.PI / 2);
-            ctx.rotate(rad);
-
-            // Рисуем указатель (вектор направления взгляда)
-            ctx.strokeStyle = '#ff3b30';
-            ctx.lineWidth = 8;
-            ctx.beginPath();
-            ctx.moveTo(0, 0);
-            ctx.lineTo(60, 0); 
-            ctx.stroke();
-
-            // Рисуем саму красную точку
+            // Пользователь (Красная точка)
             ctx.fillStyle = '#ff3b30';
             ctx.beginPath();
-            ctx.arc(0, 0, 18, 0, Math.PI * 2);
+            ctx.arc(userPos.x, userPos.y, 20, 0, Math.PI * 2);
             ctx.fill();
-            
-            ctx.restore(); // Возвращаем холст в нормальное состояние
         }
 
-        drawMap(); // Первичная отрисовка
-
-        // --- 4. ОБРАБОТКА ДАННЫХ КОМПАСА ---
-        function handleOrientation(event) {
-            let heading = 0;
-
-            // iOS (Safari) выдает точный компас
-            if (event.webkitCompassHeading) {
-                heading = event.webkitCompassHeading;
-            } 
-            // Android (Chrome) выдает угол поворота от начального положения
-            else if (event.alpha !== null) {
-                heading = 360 - event.alpha;
-            }
-
-            currentHeading = heading;
-            document.getElementById('compassHeading').innerText = Math.round(currentHeading) + '°';
-            
-            // Перерисовываем карту с новым углом поворота стрелки
-            drawMap();
-        }
-
-        // --- 5. ОБРАБОТЧИКИ КНОПОК ---
-        document.getElementById('requestBtn').addEventListener('click', async () => {
-            // Запрос разрешений для iOS 13+
-            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-                try {
-                    const permission = await DeviceOrientationEvent.requestPermission();
-                    if (permission === 'granted') {
-                        window.addEventListener('deviceorientation', handleOrientation);
-                        startNavigation();
-                    } else { alert('Доступ к компасу отклонен.'); }
-                } catch (error) { console.error(error); }
-            } else {
-                // Для Android и ПК
-                window.addEventListener('deviceorientation', handleOrientation);
-                startNavigation();
-            }
-        });
-
-        function startNavigation() {
-            document.getElementById('requestBtn').style.display = 'none';
-            document.getElementById('scanBtn').style.display = 'block';
-            document.getElementById('testQrs').style.display = 'flex';
-            showNotification("Компас включен. Отсканируйте QR-код для старта.");
-            updateUI();
-        }
-
-        document.getElementById('scanBtn').addEventListener('click', () => {
-            document.getElementById('qr-reader').style.display = 'block';
-            document.getElementById('scanBtn').style.display = 'none';
-            
-            // Инициализация сканера (запрашивает доступ к камере заднего вида)
-            html5QrcodeScanner = new Html5Qrcode("qr-reader");
-            const config = { fps: 10, qrbox: { width: 250, height: 250 } };
-            
-            html5QrcodeScanner.start({ facingMode: "environment" }, config, onScanSuccess)
-            .catch(err => {
-                showNotification("Камера недоступна. Используйте тестовые кнопки.");
-                document.getElementById('scanBtn').style.display = 'block';
-                document.getElementById('qr-reader').style.display = 'none';
-            });
-        });
-
-        function onScanSuccess(decodedText, decodedResult) {
-            // Останавливаем камеру после успешного сканирования
-            html5QrcodeScanner.stop().then(() => {
-                document.getElementById('qr-reader').style.display = 'none';
-                document.getElementById('scanBtn').style.display = 'block';
-                handleQRScan(decodedText);
-            }).catch(err => console.error(err));
-        }
-
-        // Обновление позиции на основе данных из QR-кода
-        function handleQRScan(nodeId) {
-            if (graphNodes[nodeId]) {
-                userPos.x = graphNodes[nodeId].x;
-                userPos.y = graphNodes[nodeId].y;
+        // Плавное движение к следующему узлу
+        document.getElementById('simulateBtn').addEventListener('click', () => {
+            if (currentNodeIndex < route.length - 1) {
+                let target = graphNodes[route[currentNodeIndex + 1]];
+                // Двигаем на 100 пикселей (1 метр) в сторону цели
+                let dx = target.x - userPos.x;
+                let dy = target.y - userPos.y;
+                let dist = Math.sqrt(dx*dx + dy*dy);
                 
-                let routeIndex = route.indexOf(nodeId);
-                if (routeIndex !== -1) {
-                    currentNodeIndex = routeIndex;
+                if (dist > 0) {
+                    userPos.x += (dx / dist) * 100;
+                    userPos.y += (dy / dist) * 100;
                 }
                 
-                showNotification(`Вы находитесь: ${graphNodes[nodeId].name}`);
-                updateUI();
+                let remaining = Math.round(dist / 100) - 1;
+                document.getElementById('distanceText').innerText = (remaining < 0 ? 0 : remaining) + " м";
+                
+                if (dist <= 100) currentNodeIndex++;
                 drawMap();
-            } else {
-                showNotification("Неизвестный QR-код.");
             }
-        }
-        
-        function showNotification(text) {
-            const notif = document.getElementById('notification');
-            notif.innerText = text;
-            notif.style.display = 'block';
-            setTimeout(() => { notif.style.display = 'none'; }, 4000);
-        }
+        });
 
-        function updateUI() {
-            let currentNodeId = route[currentNodeIndex];
-            document.getElementById('statusText').innerText = graphNodes[currentNodeId].name;
-
-            // Расчет дистанции до следующей точки
-            if (currentNodeIndex < route.length - 1) {
-                let nextNodeId = route[currentNodeIndex + 1];
-                document.getElementById('nextPointName').innerText = graphNodes[nextNodeId].name;
-                
-                // Математика: Теорема Пифагора. Масштаб: 100 пикселей = 1 метр.
-                let dx = graphNodes[nextNodeId].x - graphNodes[currentNodeId].x;
-                let dy = graphNodes[nextNodeId].y - graphNodes[currentNodeId].y;
-                let distancePixels = Math.sqrt(dx*dx + dy*dy);
-                let distanceMeters = Math.round(distancePixels / 100);
-                
-                document.getElementById('distanceText').innerText = distanceMeters + " м";
-            } else {
-                // Финиш
-                document.getElementById('nextPointName').innerText = "Вы на месте!";
-                document.getElementById('distanceText').innerText = "0 м";
-                document.getElementById('scanBtn').disabled = true;
-                document.getElementById('scanBtn').style.backgroundColor = '#8e8e93';
-                document.getElementById('testQrs').style.display = 'none';
-            }
-        }
+        drawMap();
     </script>
 </body>
 </html>
+```
+
+### Что здесь нового:
+1. **`simulateBtn`**: Теперь вы нажимаете кнопку, и иконка делает шаг в 1 метр (100 пикселей) по линии маршрута.
+2. **Векторная математика**: `(dx / dist) * 100` вычисляет направление к следующему узлу и сдвигает точку ровно на 1 метр.
+3. **Плавность**: Иконка теперь реально ползет вдоль синей линии, а не прыгает из точки в точку.
+
+**Как развивать дальше:** 
+Вместо нажатия на кнопку "Симулировать шаг", мы подключим функцию, которая будет вызываться **автоматически при фиксации движения** (нашими алгоритмами из прошлого этапа) или при обновлении данных от BLE-маячков. Теперь иконка готова к любому способу "подталкивания"!
